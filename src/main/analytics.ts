@@ -16,14 +16,7 @@ import {
 } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isFunction, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { normalizeEmailAddress } from "@openbot/contracts/validation";
-import {
-  ANALYTICS_GENERATIONS,
-  classifyFailure,
-  operationForCode,
-  type ReportQueue,
-  safeProperties,
-} from "@openbot/telemetry";
-import { OpenPanelBase, type OpenPanelOptions } from "@openpanel/web";
+import { classifyFailure, operationForCode, type ReportQueue, safeProperties } from "@openbot/telemetry";
 import { Effect, Exit, Scope } from "effect";
 import { parse as parseDomain } from "tldts";
 import type { FailureSignal } from "../backend/agent/failure-signal";
@@ -35,11 +28,6 @@ import { type AnalyticsOperationFailure, analyticsIO, analyticsSync } from "./an
 import { PROVIDER_AUTH_KINDS, type ProviderAuthKind } from "./analytics-provider-auth";
 import { localDay, RESOURCE_ENUMS, RESOURCE_PROPERTY_NAMES, type ResourceProperties } from "./resource-summary";
 
-const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
-const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
-// Node fetch sends no Origin, and OpenPanel answers 401 to a client with no allowed origin or
-// secret. The SDK drops a 401 in silence. Send the renderer's origin, which the project allows.
-const OPENPANEL_ORIGIN = "openbot-app://app";
 // Provider CLI events are named `<provider>_diagnostic`, `_exited` and `_start_failed`. The list
 // comes from the registry so a new provider's events keep their own name instead of collapsing to
 // `unknown` the moment it ships.
@@ -75,7 +63,6 @@ const WORKFLOW_RUN_STEP_COUNTS = [
   ["output_step_count", ["output"]],
 ] as const satisfies readonly (readonly [string, readonly WorkflowRunEnd["stepKinds"][number][]])[];
 const MAX_INVENTORY_ITEMS = 32;
-const ANALYTICS_SCHEMA_VERSION = ANALYTICS_GENERATIONS.desktop_host;
 const CURATED_AGENT_PREFIX = "openbot-curated-agent-";
 const LISTING_SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const TOOL_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/u;
@@ -130,20 +117,15 @@ type HostEventName =
   | "system_inventory"
   | "system_resources"
   | "hosted_site_action";
-export type HostOpenPanelClient = Pick<OpenPanelBase, "setGlobalProperties" | "track" | "identify" | "clear">;
-type ClientFactory = (options: OpenPanelOptions) => HostOpenPanelClient;
-
-function createOpenPanelClient(options: OpenPanelOptions): HostOpenPanelClient {
-  const client = new OpenPanelBase(options);
-  client.api.addHeader("origin", OPENPANEL_ORIGIN);
-  return client;
+/** The shape of a product analytics client. None is made: this build sends no analytics. */
+interface HostOpenPanelClient {
+  clear(): unknown;
+  identify(payload: { profileId: string; email: string }): unknown;
+  track(name: string, properties: HostProperties & { __timestamp?: string; profileId: string }): unknown;
 }
 
 export interface HostAnalyticsOptions {
   reports?: ReportQueue;
-  enabled: boolean;
-  /** The OpenPanel API. Production when omitted; a dev capture server in `analytics-redaction-e2e`. */
-  apiUrl?: string;
   trackingEnabled?: boolean;
   appVersion: string;
   platform: "darwin" | "win32" | "linux";
@@ -326,7 +308,7 @@ export class HostAnalytics {
   #resourceCheck = false;
   readonly #operationQueue: AnalyticsOperationQueue = { active: false, operations: [] };
 
-  constructor(options: HostAnalyticsOptions, createClient: ClientFactory = createOpenPanelClient) {
+  constructor(options: HostAnalyticsOptions) {
     this.#reports = options.reports;
     this.#resolveOwner = options.resolveOwner;
     this.#resolveAgent = options.resolveAgent;
@@ -338,23 +320,8 @@ export class HostAnalytics {
     this.#inventoryDayStore = options.inventoryDay;
     this.#resources = options.resources;
     this.#trackingEnabled = options.trackingEnabled ?? true;
-    if (!options.enabled) {
-      this.#client = null;
-      return;
-    }
-    try {
-      const client = createClient({ apiUrl: options.apiUrl ?? OPENPANEL_API_URL, clientId: OPENPANEL_CLIENT_ID });
-      client.setGlobalProperties({
-        surface: "desktop_host",
-        environment: "production",
-        event_schema_version: ANALYTICS_SCHEMA_VERSION,
-        app_version: options.appVersion,
-        platform: options.platform,
-      });
-      this.#client = client;
-    } catch {
-      this.#client = null;
-    }
+    // Product analytics is removed: no client is made and nothing is sent.
+    this.#client = null;
   }
 
   handleAgentEvent(event: AgentEvent): void {

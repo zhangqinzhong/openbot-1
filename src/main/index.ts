@@ -1126,7 +1126,6 @@ if (!hasSingleInstanceLock) {
         windows,
         appIconPath,
         appVariant,
-        analyticsCaptureUrl,
         developmentRemoteRole,
         developmentTestClientEnabled,
         hostedServer,

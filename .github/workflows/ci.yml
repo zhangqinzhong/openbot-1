@@ -972,11 +972,6 @@ jobs:
             const remotePrivateJwk = process.env.REMOTE_TICKET_PRIVATE_JWK;
             const remotePublicJwks = process.env.REMOTE_TICKET_PUBLIC_JWKS;
             const remoteWebhookSecret = process.env.REMOTE_AUTH_WEBHOOK_SECRET;
-            const openpanelClientId = process.env.OPENPANEL_CLIENT_ID?.trim();
-            const openpanelClientSecret = process.env.OPENPANEL_CLIENT_SECRET?.trim();
-            if (!openpanelClientId || !openpanelClientSecret) {
-              throw new Error("OPENPANEL_CLIENT_ID and OPENPANEL_CLIENT_SECRET are required for production analytics.");
-            }
             const path = process.env.SECRETS_PATH;
             if (
               !smtp ||
@@ -1023,8 +1018,6 @@ jobs:
             }
             const secrets = {
               ...optional,
-              OPENPANEL_CLIENT_ID: openpanelClientId,
-              OPENPANEL_CLIENT_SECRET: openpanelClientSecret,
               EMAIL_SMTP_PASSWORD: smtp,
               SKILLS_ADMIN_TOKEN: skillsAdmin,
               SITE_REPORT_HASH_SECRET: siteReportHash,

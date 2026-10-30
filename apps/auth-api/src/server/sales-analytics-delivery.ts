@@ -9,12 +9,9 @@ import {
   PLAN_CHANGE_DIRECTIONS,
 } from "./account-analytics";
 
-const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
-const SEND_TIMEOUT_MS = 5_000;
 const CLAIM_TIMEOUT_MS = 5 * 60_000;
 const MAX_BATCH_SIZE = 50;
 const MAX_RATE_LIMIT_RETRIES = 3;
-const RATE_LIMIT_RETRY_DELAY_MS = 60_000;
 
 const PROFILE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/u;
 const SOURCE_KEY_PATTERN = /^[A-Za-z0-9_.:-]{1,512}$/u;
@@ -176,14 +173,12 @@ export class SalesAnalyticsDelivery {
   readonly #database: D1Database;
   readonly #clientId: string | undefined;
   readonly #clientSecret: string | undefined;
-  readonly #fetch: (input: string, init: RequestInit) => Promise<Response>;
   readonly #now: () => number;
 
   constructor(options: SalesAnalyticsDeliveryOptions) {
     this.#database = options.database;
     this.#clientId = options.clientId?.trim() || undefined;
     this.#clientSecret = options.clientSecret?.trim() || undefined;
-    this.#fetch = options.fetch;
     this.#now = options.now ?? Date.now;
   }
 
@@ -243,61 +238,9 @@ export class SalesAnalyticsDelivery {
     });
   }
 
-  async #send(row: LedgerEvent): Promise<DeliveryOutcome> {
-    let properties: SalesAnalyticsProperties;
-    try {
-      const parsed = JSON.parse(row.properties_json);
-      if (!isEventProperties(parsed))
-        return { status: "rejected", httpStatus: null, retryAt: null, error: "invalid_properties" };
-      if (!Number.isFinite(new Date(row.event_timestamp).getTime())) {
-        return { status: "rejected", httpStatus: null, retryAt: null, error: "invalid_timestamp" };
-      }
-      properties = parsed;
-    } catch {
-      return { status: "rejected", httpStatus: null, retryAt: null, error: "invalid_properties" };
-    }
-
-    const payload: {
-      name: string;
-      profileId?: string;
-      properties: SalesAnalyticsProperties;
-    } = {
-      name: row.event_name,
-      properties: { ...properties, __timestamp: new Date(row.event_timestamp).toISOString() },
-    };
-    if (row.profile_id) payload.profileId = row.profile_id;
-
-    let response: Response;
-    try {
-      const clientId = this.#clientId;
-      const clientSecret = this.#clientSecret;
-      if (!clientId || !clientSecret) {
-        return { status: "uncertain", httpStatus: null, retryAt: null, error: "credentials_unavailable" };
-      }
-      response = await this.#fetch(`${OPENPANEL_API_URL}/track`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "openpanel-client-id": clientId,
-          "openpanel-client-secret": clientSecret,
-          "openpanel-sdk-name": "openbot-account-api",
-        },
-        body: JSON.stringify({ type: "track", payload }),
-        signal: AbortSignal.timeout(SEND_TIMEOUT_MS),
-      });
-    } catch {
-      return { status: "uncertain", httpStatus: null, retryAt: null, error: "transport_unknown" };
-    }
-
-    if (response.ok) return { status: "sent", httpStatus: response.status, retryAt: null, error: null };
-    if (response.status === 429) {
-      const retryAt = row.attempts <= MAX_RATE_LIMIT_RETRIES ? this.#now() + RATE_LIMIT_RETRY_DELAY_MS : null;
-      return { status: "rejected", httpStatus: response.status, retryAt, error: "rate_limited" };
-    }
-    if (response.status >= 400 && response.status < 500) {
-      return { status: "rejected", httpStatus: response.status, retryAt: null, error: "http_rejected" };
-    }
-    return { status: "uncertain", httpStatus: response.status, retryAt: null, error: "http_unknown" };
+  /** Product analytics is removed: a claimed event is closed as rejected and never sent. */
+  async #send(_row: LedgerEvent): Promise<DeliveryOutcome> {
+    return { status: "rejected", httpStatus: null, retryAt: null, error: "analytics_removed" };
   }
 
   async #claim(sourceKey: string, now: number): Promise<LedgerEvent | null> {

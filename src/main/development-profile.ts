@@ -19,7 +19,7 @@ export function readDevelopmentRemoteDebuggingPort(value: string | undefined): s
   return Number.isInteger(port) && port >= 1_024 && port <= 65_535 ? String(port) : null;
 }
 
-// `scripts/analytics-redaction-e2e.ts` reads analytics on a local capture server. The caller reads
+// A local capture server for analytics, which this build no longer sends. The caller reads
 // this only in an unpackaged build, and only a loopback HTTP origin is accepted, so the setting
 // cannot send events off this computer.
 export function readAnalyticsCaptureUrl(value: string | undefined): string | null {

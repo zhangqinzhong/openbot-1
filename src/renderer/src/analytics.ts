@@ -24,13 +24,9 @@ import {
 } from "@openbot/contracts/ipc";
 import { isBoolean, isDynamicRecord, isFunction, isNumber, isOneOf, isString } from "@openbot/contracts/runtime-values";
 import { normalizeEmailAddress } from "@openbot/contracts/validation";
-import { ANALYTICS_GENERATIONS } from "@openbot/telemetry";
-import { OpenPanelBase, type OpenPanelOptions } from "@openpanel/web";
-import { ANALYTICS_SCHEMA_VERSION, configureDesktopReports, configureErrorReports } from "./error-reports";
+import { configureDesktopReports, configureErrorReports } from "./error-reports";
 import { MARKETPLACE_PLUGINS } from "./features/settings/marketplace-plugin-catalog";
 
-const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
-const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
 const MAX_PENDING_EVENTS = 100;
 const CURATED_LISTING_PATTERN = /^openbot-curated-(?:skill|agent)-([a-z0-9][a-z0-9-]{0,63})$/u;
 const PLUGIN_SLUGS = new Set(MARKETPLACE_PLUGINS.map((plugin) => plugin.slug));
@@ -355,9 +351,12 @@ const ATTACHMENT_KINDS: readonly AttachmentKind[] = ["image", "document", "sprea
 
 type AnalyticsEventName = keyof DesktopAnalyticsEvents;
 export type DesktopAnalyticsProperties<Name extends AnalyticsEventName> = DesktopAnalyticsEvents[Name];
-type OpenPanelClient = Pick<OpenPanelBase, "setGlobalProperties" | "track" | "identify" | "clear">;
-
-type ClientFactory = (options: OpenPanelOptions) => OpenPanelClient;
+/** The shape of a product analytics client. None is made: this build sends no analytics. */
+interface OpenPanelClient {
+  clear(): unknown;
+  identify(payload: { profileId: string; email: string }): unknown;
+  track(name: string, properties: SanitizedAnalyticsProperties & { __timestamp?: string; profileId?: string }): unknown;
+}
 type AnalyticsIdentity = Pick<CentralAuthUser, "id" | "email">;
 type AnalyticsOperationKind = "clear" | "identify" | "track";
 type AnalyticsOperation = { kind: AnalyticsOperationKind; run: () => unknown };
@@ -722,10 +721,6 @@ const UPDATE_PHASES = new Set([
   "unsupported",
 ]);
 
-function shouldEnableDesktopAnalytics(appInfo: AppInfo, productionBuild: boolean): boolean {
-  return appInfo.analyticsCaptureUrl !== undefined || (productionBuild && appInfo.variant === "production");
-}
-
 function sanitizeDesktopAnalyticsEvent(
   name: AnalyticsEventName,
   properties: DesktopAnalyticsEvents[AnalyticsEventName],
@@ -826,10 +821,8 @@ function safeNumber(value: unknown, minimum: number, maximum: number): number | 
 }
 
 class DesktopAnalytics {
-  readonly #createClient: ClientFactory;
-  readonly #productionBuild: boolean;
-  #client: OpenPanelClient | null = null;
-  #anonymousClient: OpenPanelClient | null = null;
+  readonly #client: OpenPanelClient | null = null;
+  readonly #anonymousClient: OpenPanelClient | null = null;
   #disabled = false;
   #trackingEnabled = true;
   #identity: AnalyticsIdentity | null = null;
@@ -837,85 +830,21 @@ class DesktopAnalytics {
   readonly #clientQueue: AnalyticsOperationQueue = { active: false, operations: [] };
   readonly #anonymousQueue: AnalyticsOperationQueue = { active: false, operations: [] };
 
-  constructor(
-    createClient: ClientFactory = (options) => new OpenPanelBase(options),
-    productionBuild = import.meta.env.PROD,
-  ) {
-    this.#createClient = createClient;
-    this.#productionBuild = productionBuild;
-  }
-
+  /** Product analytics is removed: no client is made and nothing is sent. */
   configure(appInfo: AppInfo): boolean {
     configureDesktopReports(appInfo, this.#trackingEnabled, this.#identity);
-    if (this.#client) return true;
-    if (!shouldEnableDesktopAnalytics(appInfo, this.#productionBuild)) {
-      this.#disabled = true;
-      this.#pending = [];
-      return false;
-    }
-    try {
-      const clientOptions = {
-        apiUrl: appInfo.analyticsCaptureUrl ?? OPENPANEL_API_URL,
-        clientId: OPENPANEL_CLIENT_ID,
-      };
-      const client = this.#createClient(clientOptions);
-      const anonymousClient = this.#createClient(clientOptions);
-      const globalProperties = {
-        __referrer: "",
-        surface: "desktop",
-        environment: "production",
-        event_schema_version: ANALYTICS_SCHEMA_VERSION,
-        app_version: appInfo.version,
-        platform: appInfo.platform,
-      };
-      client.setGlobalProperties(globalProperties);
-      anonymousClient.setGlobalProperties(globalProperties);
-      this.#client = client;
-      this.#anonymousClient = anonymousClient;
-      if (this.#trackingEnabled && this.#identity) this.#identifyClient(this.#identity);
-      if (this.#trackingEnabled) this.#flush();
-      return true;
-    } catch {
-      return false;
-    }
+    this.#disabled = true;
+    this.#pending = [];
+    return false;
   }
 
-  /**
-   * Starts product analytics in the web client. It sends only from the production site, like the web
-   * failure reports, and the web preference controls both.
-   */
+  /** Product analytics is removed from the web client too. */
   configureWeb(options: { version: string; user: AnalyticsIdentity | null; enabled: boolean }): boolean {
-    if (!this.#client && (!this.#productionBuild || window.location.origin !== "https://openbot.run")) {
-      this.#disabled = true;
-      this.#pending = [];
-      return false;
-    }
+    this.#disabled = true;
+    this.#pending = [];
     this.setTrackingEnabled(options.enabled);
-    if (!this.#client) {
-      try {
-        const clientOptions = { apiUrl: OPENPANEL_API_URL, clientId: OPENPANEL_CLIENT_ID };
-        const client = this.#createClient(clientOptions);
-        const anonymousClient = this.#createClient(clientOptions);
-        const globalProperties = {
-          __referrer: "",
-          surface: "web",
-          environment: "production",
-          event_schema_version: ANALYTICS_GENERATIONS.web,
-          app_version: options.version,
-          platform: "web",
-        };
-        client.setGlobalProperties(globalProperties);
-        anonymousClient.setGlobalProperties(globalProperties);
-        this.#client = client;
-        this.#anonymousClient = anonymousClient;
-        if (this.#trackingEnabled && this.#identity) this.#identifyClient(this.#identity);
-        if (this.#trackingEnabled) this.#flush();
-      } catch {
-        return false;
-      }
-    }
     this.setUser(options.user);
-    return true;
+    return false;
   }
 
   setUser(user: AnalyticsIdentity | null): void {
@@ -1015,14 +944,6 @@ class DesktopAnalytics {
         ...(profileId ? { profileId } : {}),
       }),
     );
-  }
-
-  #flush(): void {
-    const pending = this.#pending;
-    this.#pending = [];
-    for (const event of pending) {
-      this.#send(event.name, event.properties, event.profileId, event.timestamp);
-    }
   }
 
   #identifyClient(user: AnalyticsIdentity): void {

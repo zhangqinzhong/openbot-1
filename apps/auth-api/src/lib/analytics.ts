@@ -8,7 +8,6 @@ import {
   rememberFirstTouch,
 } from "@openbot/contracts/first-touch";
 import { isBoolean, isOneOf } from "@openbot/contracts/runtime-values";
-import { OpenPanel, OpenPanelBase, type OpenPanelOptions, type TrackProperties } from "@openpanel/web";
 import { BRAND_ROUTE } from "./brand-page";
 import { COMMERCIAL_LICENSE_ROUTE } from "./commercial-license";
 import { CONTACT_TOPICS } from "./contact";
@@ -28,10 +27,7 @@ import { PRIVACY_POLICY_ROUTE } from "./privacy-policy";
 import { TEAMS_ROUTE } from "./teams-page";
 import { TERMS_ROUTE } from "./terms";
 
-const OPENPANEL_API_URL = "https://analytics.openbot.run/api";
-const OPENPANEL_CLIENT_ID = "6c989975-87ef-4f0c-857e-ab449a65b5c2";
 /** Generation 10 adds `billing_return_viewed` and `contact_form_submitted`. */
-const ANALYTICS_SCHEMA_VERSION = 10;
 
 type LandingAcquisitionSource = FirstTouchAcquisitionSource;
 
@@ -191,26 +187,13 @@ const PUBLISHED_SLUGS = new Set(
   CONTENT_COLLECTIONS.flatMap((collection) => collection.articles.map((article) => article.slug)),
 );
 
-type OpenPanelClient = Pick<OpenPanel, "setGlobalProperties"> & {
-  track: (name: string, properties: TrackProperties, path: string) => ReturnType<OpenPanelBase["track"]>;
-  trackScreenView: (path: string) => ReturnType<OpenPanelBase["track"]>;
-};
+type TrackProperties = Partial<Record<string, string | number | boolean>>;
 
-type ClientFactory = (options: OpenPanelOptions) => OpenPanelClient;
-
-/**
- * `OpenPanel.track` replaces `__path` with its own `lastPath`, which stays empty because screen
- * tracking is disabled here. The base method only merges the given properties, so both calls use it
- * and pass the reported path explicitly.
- */
-function createOpenPanelClient(options: OpenPanelOptions): OpenPanelClient {
-  const client = new OpenPanel(options);
-  return {
-    setGlobalProperties: (properties) => client.setGlobalProperties(properties),
-    track: (name, properties, path) =>
-      OpenPanelBase.prototype.track.call(client, name, { ...properties, __path: path }),
-    trackScreenView: (path) => OpenPanelBase.prototype.track.call(client, "screen_view", { __path: path }),
-  };
+/** The shape of a product analytics client. None is made: this build sends no analytics. */
+interface OpenPanelClient {
+  setGlobalProperties: (properties: TrackProperties) => void;
+  track: (name: string, properties: TrackProperties, path: string) => unknown;
+  trackScreenView: (path: string) => unknown;
 }
 
 /** The download routes of each platform, reversed so a click can name the platform it asked for. */
@@ -270,24 +253,13 @@ const EVENT_PROPERTY_ALLOWLIST = {
  */
 const PENDING_EVENT_LIMIT = 4;
 
-function shouldEnableLandingAnalytics(hostname: string, productionBuild: boolean): boolean {
-  return productionBuild && hostname === "openbot.run";
-}
-
 class LandingAnalytics {
-  readonly #createClient: ClientFactory;
-  readonly #productionBuild: boolean;
-  #client: OpenPanelClient | null = null;
+  readonly #client: OpenPanelClient | null = null;
   #lastScreenPath: LandingScreenPath | null = null;
   #campaignPath = "/";
   #pageStarted = false;
   readonly #pending: { name: LandingEventName; properties: TrackProperties }[] = [];
   readonly #clickCleanup = new WeakMap<Document, (replacement: boolean) => void>();
-
-  constructor(createClient: ClientFactory = createOpenPanelClient, productionBuild = import.meta.env.PROD) {
-    this.#createClient = createClient;
-    this.#productionBuild = productionBuild;
-  }
 
   /**
    * `screenPath` separates the marketing surfaces that share this listener, down to the individual
@@ -406,29 +378,9 @@ class LandingAnalytics {
     return () => cleanup(false);
   }
 
-  #ensureClient(hostname: string): boolean {
-    if (!shouldEnableLandingAnalytics(hostname, this.#productionBuild)) return false;
-    if (this.#client) return true;
-    try {
-      const client = this.#createClient({
-        apiUrl: OPENPANEL_API_URL,
-        clientId: OPENPANEL_CLIENT_ID,
-        trackScreenViews: false,
-        trackOutgoingLinks: false,
-        trackAttributes: false,
-        sessionReplay: { enabled: false },
-      });
-      client.setGlobalProperties({
-        __referrer: "",
-        surface: "landing",
-        environment: "production",
-        event_schema_version: ANALYTICS_SCHEMA_VERSION,
-      });
-      this.#client = client;
-      return true;
-    } catch {
-      return false;
-    }
+  /** Product analytics is removed: no client is made. */
+  #ensureClient(_hostname: string): boolean {
+    return false;
   }
 
   #handleClick(event: MouseEvent): void {
