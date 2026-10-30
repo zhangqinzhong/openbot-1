@@ -18,10 +18,8 @@ electronFuses:
   onlyLoadAppFromAsar: true
   loadBrowserProcessSpecificV8Snapshot: false
   grantFileProtocolExtraPrivileges: false
-publish:
-  provider: github
-  owner: nightly-labs
-  repo: openbot
+# No publish provider: the package has no app-update.yml, so this build never updates itself from the
+# upstream releases.
 files:
   - out/**/*
   - package.json
